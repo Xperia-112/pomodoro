@@ -317,29 +317,49 @@
 <script>
 const WORK_SEC = 25 * 60;
 const BREAK_SEC = 5 * 60;
-const RING = 2 * Math.PI * 120; // circumference
+const CIRCUMFERENCE = 2 * Math.PI * 120;
+const MODE = { WORK: 'work', BREAK: 'break' };
+const STORAGE_KEY = 'pomodoro_tasks';
+const LABELS = {
+  focusing: '专注中...',
+  resting: '休息一下',
+  paused: '已暂停',
+  ready: '准备开始',
+  workRound: '工作回合'
+};
 
-let mode = 'work';
+let mode = MODE.WORK;
 let remaining = WORK_SEC;
-let total = WORK_SEC;
 let timer = null;
 let sessions = 0;
+let audioCtx = null;
 
-// Audio - generate chime with Web Audio API
+const $ = (id) => document.getElementById(id);
+const timeDisplay = $('timeDisplay');
+const progressEl = $('progress');
+const statusLabel = $('statusLabel');
+const btnStart = $('btnStart');
+const sessionDots = $('sessionDots');
+const taskList = $('taskList');
+const taskEmpty = $('taskEmpty');
+const taskInput = $('taskInput');
+
+function totalSeconds() { return mode === MODE.WORK ? WORK_SEC : BREAK_SEC; }
+
 function playChime() {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+  if (!audioCtx) audioCtx = new AudioContext();
+  const notes = [523.25, 659.25, 783.99];
   notes.forEach((freq, i) => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
     osc.type = 'sine';
     osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.3, ctx.currentTime + i * 0.15);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.6);
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime + i * 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.15 + 0.6);
     osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(ctx.currentTime + i * 0.15);
-    osc.stop(ctx.currentTime + i * 0.15 + 0.6);
+    gain.connect(audioCtx.destination);
+    osc.start(audioCtx.currentTime + i * 0.15);
+    osc.stop(audioCtx.currentTime + i * 0.15 + 0.6);
   });
 }
 
@@ -350,29 +370,34 @@ function formatTime(s) {
 }
 
 function updateDisplay() {
-  document.getElementById('timeDisplay').textContent = formatTime(remaining);
-  const progress = (remaining / total) * RING;
-  document.getElementById('progress').setAttribute('stroke-dashoffset', RING - progress);
+  timeDisplay.textContent = formatTime(remaining);
+  const progress = (remaining / totalSeconds()) * CIRCUMFERENCE;
+  progressEl.setAttribute('stroke-dashoffset', CIRCUMFERENCE - progress);
 }
 
 function updateModeUI() {
-  const body = document.body;
-  const progress = document.getElementById('progress');
-  const label = document.getElementById('statusLabel');
-  const tabs = document.querySelectorAll('.mode-tab');
-
-  body.className = mode === 'work' ? 'work-mode' : 'break-mode';
-  progress.className = 'progress-circle' + (mode === 'break' ? ' break' : '');
-
-  tabs.forEach(t => {
+  document.body.className = mode === MODE.WORK ? 'work-mode' : 'break-mode';
+  progressEl.className = 'progress-circle' + (mode === MODE.BREAK ? ' break' : '');
+  document.querySelectorAll('.mode-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.mode === mode);
   });
+}
 
-  label.textContent = mode === 'work' ? '专注中...' : '休息一下';
+function setStatus(labelKey) {
+  btnStart.textContent = labelKey === 'running' ? '暂停' : labelKey === 'paused' ? '继续' : '开始';
+  statusLabel.textContent = LABELS[labelKey] || '准备开始';
 }
 
 function stopTimer() {
   if (timer) { clearInterval(timer); timer = null; }
+}
+
+function resetToMode(m) {
+  stopTimer();
+  if (m !== undefined) mode = m;
+  remaining = totalSeconds();
+  updateDisplay();
+  updateModeUI();
 }
 
 function tick() {
@@ -382,100 +407,77 @@ function tick() {
     stopTimer();
     playChime();
 
-    if (mode === 'work') {
+    if (mode === MODE.WORK) {
       sessions++;
       renderSessions();
     }
 
-    // Switch mode
-    mode = mode === 'work' ? 'break' : 'work';
-    remaining = mode === 'work' ? WORK_SEC : BREAK_SEC;
-    total = remaining;
+    mode = mode === MODE.WORK ? MODE.BREAK : MODE.WORK;
+    remaining = totalSeconds();
     updateModeUI();
     updateDisplay();
-
-    document.getElementById('btnStart').textContent = '开始';
-    document.getElementById('statusLabel').textContent =
-      mode === 'work' ? '工作回合' : '休息一下';
+    setStatus('ready');
   }
 }
 
 function startTimer() {
   if (timer) {
-    // Pause
     stopTimer();
-    document.getElementById('btnStart').textContent = '继续';
-    document.getElementById('statusLabel').textContent = '已暂停';
+    setStatus('paused');
     return;
   }
   timer = setInterval(tick, 1000);
-  document.getElementById('btnStart').textContent = '暂停';
-  document.getElementById('statusLabel').textContent =
-    mode === 'work' ? '专注中...' : '休息一下';
+  setStatus('running');
 }
 
 function resetTimer() {
-  stopTimer();
-  remaining = mode === 'work' ? WORK_SEC : BREAK_SEC;
-  total = remaining;
-  updateDisplay();
-  updateModeUI();
-  document.getElementById('btnStart').textContent = '开始';
-  document.getElementById('statusLabel').textContent = '准备开始';
+  resetToMode();
+  setStatus('ready');
 }
 
 function switchMode(newMode) {
   if (newMode === mode) return;
-  stopTimer();
-  mode = newMode;
-  remaining = mode === 'work' ? WORK_SEC : BREAK_SEC;
-  total = remaining;
-  updateDisplay();
-  updateModeUI();
-  document.getElementById('btnStart').textContent = '开始';
-  document.getElementById('statusLabel').textContent = '准备开始';
+  resetToMode(newMode);
+  setStatus('ready');
 }
 
 function renderSessions() {
-  const container = document.getElementById('sessionDots');
-  const dots = [];
   for (let i = 0; i < 4; i++) {
-    const dot = document.createElement('span');
-    dot.className = 'session-dot';
-    if (i < sessions % 4) dot.classList.add('done');
-    if (i === sessions % 4 && sessions > 0) dot.classList.add('current');
-    dots.push(dot);
+    const dot = sessionDots.children[i] || sessionDots.appendChild(document.createElement('span'));
+    dot.className = 'session-dot' +
+      (i < sessions % 4 ? ' done' : '') +
+      (i === sessions % 4 && sessions > 0 ? ' current' : '');
   }
-  container.innerHTML = '';
-  dots.forEach(d => container.appendChild(d));
 }
 
-// Tasks
-let tasks = JSON.parse(localStorage.getItem('pomodoro_tasks') || '[]');
+let tasks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
 
 function saveTasks() {
-  localStorage.setItem('pomodoro_tasks', JSON.stringify(tasks));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+}
+
+function renderTaskItem(i) {
+  const t = tasks[i];
+  const li = document.createElement('li');
+  li.className = 'task-item' + (t.done ? ' done' : '');
+  li.innerHTML = `
+    <span class="task-check" data-index="${i}"></span>
+    <span class="task-text" data-index="${i}">${escapeHtml(t.text)}</span>
+    <button class="task-delete" data-index="${i}">×</button>
+  `;
+  return li;
 }
 
 function renderTasks() {
-  const list = document.getElementById('taskList');
-  const empty = document.getElementById('taskEmpty');
-  list.innerHTML = '';
+  taskList.innerHTML = '';
   if (tasks.length === 0) {
-    empty.style.display = 'block';
+    taskEmpty.style.display = 'block';
     return;
   }
-  empty.style.display = 'none';
-  tasks.forEach((t, i) => {
-    const li = document.createElement('li');
-    li.className = 'task-item' + (t.done ? ' done' : '');
-    li.innerHTML = `
-      <span class="task-check" data-index="${i}"></span>
-      <span class="task-text" data-index="${i}">${escapeHtml(t.text)}</span>
-      <button class="task-delete" data-index="${i}">×</button>
-    `;
-    list.appendChild(li);
-  });
+  taskEmpty.style.display = 'none';
+  const frag = document.createDocumentFragment();
+  tasks.forEach((_, i) => frag.appendChild(renderTaskItem(i)));
+  taskList.appendChild(frag);
 }
 
 function escapeHtml(s) {
@@ -484,45 +486,46 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function addTaskFromInput() {
+  const text = taskInput.value.trim();
+  if (text) { addTask(text); taskInput.value = ''; taskInput.focus(); }
+}
+
 function addTask(text) {
   tasks.push({ text, done: false });
   saveTasks();
-  renderTasks();
+  taskEmpty.style.display = 'none';
+  taskList.appendChild(renderTaskItem(tasks.length - 1));
 }
 
 function toggleTask(i) {
   tasks[i].done = !tasks[i].done;
   saveTasks();
-  renderTasks();
+  const item = taskList.children[i];
+  if (item) item.classList.toggle('done');
 }
 
 function deleteTask(i) {
   tasks.splice(i, 1);
   saveTasks();
-  renderTasks();
+  if (taskList.children[i]) taskList.children[i].remove();
+  if (tasks.length === 0) taskEmpty.style.display = 'block';
 }
 
-document.getElementById('btnStart').addEventListener('click', startTimer);
-document.getElementById('btnReset').addEventListener('click', resetTimer);
+btnStart.addEventListener('click', startTimer);
+$('btnReset').addEventListener('click', resetTimer);
 
 document.querySelectorAll('.mode-tab').forEach(tab => {
   tab.addEventListener('click', () => switchMode(tab.dataset.mode));
 });
 
-document.getElementById('btnAddTask').addEventListener('click', () => {
-  const input = document.getElementById('taskInput');
-  const text = input.value.trim();
-  if (text) { addTask(text); input.value = ''; input.focus(); }
+$('btnAddTask').addEventListener('click', addTaskFromInput);
+
+taskInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') addTaskFromInput();
 });
 
-document.getElementById('taskInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    const text = e.target.value.trim();
-    if (text) { addTask(text); e.target.value = ''; }
-  }
-});
-
-document.getElementById('taskList').addEventListener('click', e => {
+taskList.addEventListener('click', e => {
   const i = e.target.dataset.index;
   if (i === undefined) return;
   if (e.target.classList.contains('task-check') || e.target.classList.contains('task-text')) {
@@ -532,7 +535,6 @@ document.getElementById('taskList').addEventListener('click', e => {
   }
 });
 
-// Init
 updateDisplay();
 updateModeUI();
 renderSessions();
